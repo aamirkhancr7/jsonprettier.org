@@ -1,0 +1,21 @@
+{
+  "name": "JSON Prettier",
+  "short_name": "JSONPretty",
+  "description": "Free online tool to format and beautify JSON data - jsonprettier.org",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#16a34a",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64 32x32 16x16",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "/social-preview.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
