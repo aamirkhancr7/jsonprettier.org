@@ -88,8 +88,8 @@ JSON Prettier is a modern web application that helps developers format, validate
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/json-pretty.git
-cd json-pretty
+git clone https://github.com/aamirkhancr7/jsonprettier.org.git
+cd jsonprettier.org
 
 # Install dependencies
 pnpm install
@@ -122,7 +122,7 @@ The static site will be generated in the `.output/public` directory.
 #### Project Structure
 
 ```
-json-pretty/
+jsonprettier.org/
 ├── app.vue                    # Root layout
 ├── pages/
 │   └── index.vue             # Main page with SEO meta tags
