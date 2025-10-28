@@ -162,6 +162,165 @@ function handleFileUpload(event) {
   }
 }
 
+// Cross-browser error position detection
+function findErrorPosition(jsonText, error) {
+  // Chrome/Edge: "Unexpected token X in JSON at position 123"
+  const chromeMatch = error.message.match(/position\s+(\d+)/i)
+  if (chromeMatch) {
+    return parseInt(chromeMatch[1])
+  }
+
+  // Firefox: "JSON.parse: unexpected character at line X column Y"
+  const firefoxMatch = error.message.match(/line\s+(\d+)\s+column\s+(\d+)/i)
+  if (firefoxMatch) {
+    const line = parseInt(firefoxMatch[1])
+    const col = parseInt(firefoxMatch[2])
+    const lines = jsonText.split('\n')
+    let pos = 0
+    for (let i = 0; i < line - 1 && i < lines.length; i++) {
+      pos += lines[i].length + 1 // +1 for newline
+    }
+    pos += col - 1
+    return pos
+  }
+
+  // Safari and other browsers: Manual syntax analysis to find error position
+  // This scans through the JSON and tracks structure to pinpoint errors
+
+  const stack = [] // Track { [ depths
+  let inString = false
+  let escapeNext = false
+  let expectValue = false // After : or [ or {
+  let expectCommaOrClose = false // After a complete value
+  let lastValueEndPos = -1
+
+  for (let i = 0; i < jsonText.length; i++) {
+    const char = jsonText[i]
+    const prevChar = i > 0 ? jsonText[i - 1] : ''
+
+    if (escapeNext) {
+      escapeNext = false
+      continue
+    }
+
+    // Handle strings
+    if (inString) {
+      if (char === '\\') {
+        escapeNext = true
+      } else if (char === '"') {
+        inString = false
+        lastValueEndPos = i
+        expectCommaOrClose = true
+        expectValue = false
+      } else if (char === '\n' || char === '\r') {
+        // Unescaped newline in string
+        return i - 1
+      }
+      continue
+    }
+
+    // Skip whitespace
+    if (char === ' ' || char === '\t' || char === '\n' || char === '\r') {
+      continue
+    }
+
+    // Start of string
+    if (char === '"') {
+      if (expectCommaOrClose && !expectValue) {
+        // Expected comma or closing bracket, got string
+        return i
+      }
+      inString = true
+      expectValue = false
+      expectCommaOrClose = false
+      continue
+    }
+
+    // Opening brackets
+    if (char === '{' || char === '[') {
+      if (expectCommaOrClose && !expectValue) {
+        // Expected comma or closing bracket, got opening bracket
+        return i
+      }
+      stack.push({ char, pos: i })
+      expectValue = char === '[' // Arrays expect value next
+      expectCommaOrClose = false
+      continue
+    }
+
+    // Closing brackets
+    if (char === '}' || char === ']') {
+      if (stack.length === 0) {
+        // Unmatched closing bracket
+        return i
+      }
+      const last = stack.pop()
+      const expectedClose = last.char === '{' ? '}' : ']'
+      if (char !== expectedClose) {
+        // Mismatched bracket
+        return i
+      }
+      lastValueEndPos = i
+      expectValue = false
+      expectCommaOrClose = true
+      continue
+    }
+
+    // Colon (after object key)
+    if (char === ':') {
+      expectValue = true
+      expectCommaOrClose = false
+      continue
+    }
+
+    // Comma
+    if (char === ',') {
+      if (!expectCommaOrClose) {
+        // Unexpected comma (e.g., leading comma, double comma)
+        return i
+      }
+      expectValue = true
+      expectCommaOrClose = false
+      continue
+    }
+
+    // Number, boolean, null
+    if (char === '-' || char === '.' || (char >= '0' && char <= '9') ||
+        char === 't' || char === 'f' || char === 'n') {
+      if (expectCommaOrClose && !expectValue) {
+        // Expected comma or closing bracket, got value
+        return i
+      }
+      // Find the end of this value
+      let j = i
+      while (j < jsonText.length &&
+             /[0-9.eE+\-tfalsenu]/.test(jsonText[j])) {
+        j++
+      }
+      lastValueEndPos = j - 1
+      i = j - 1 // Skip ahead
+      expectValue = false
+      expectCommaOrClose = true
+      continue
+    }
+
+    // Unexpected character
+    return i
+  }
+
+  // Check for unclosed structures
+  if (inString) {
+    return jsonText.length - 1
+  }
+  if (stack.length > 0) {
+    // Unclosed bracket - error at the end or at the last bracket
+    return jsonText.length - 1
+  }
+
+  // If no specific error found, return the position where JSON ends
+  return lastValueEndPos >= 0 ? lastValueEndPos : jsonText.length - 1
+}
+
 // JSON prettify and error highlight
 function prettifyRawJson() {
   // Save scroll position and caret before prettification
@@ -194,13 +353,16 @@ function prettifyRawJson() {
       applyHighlighting(outputContent.value, prettyJson.value)
     }
   } catch (e) {
-    const match = e.message.match(/position\s(\d+)/i)
-    if (match) {
-      const pos = parseInt(match[1])
+    const pos = findErrorPosition(rawJson.value, e)
+    if (pos !== null) {
       const lines = rawJson.value.substring(0, pos).split('\n')
       inputErrorLineIndex.value = lines.length - 1
-      errorMessage.value = `Input error at line ${lines.length}:\n${lines.at(-1)}\n${' '.repeat(lines.at(-1).length)}←\n${e.message}`
-      // Don't auto-scroll to error - let user stay where they are editing
+      const errorLine = lines.at(-1) || ''
+      errorMessage.value = `Input error at line ${lines.length}:\n${errorLine}\n${' '.repeat(errorLine.length)}←\n${e.message}`
+    } else {
+      // Fallback: show error without line number
+      inputErrorLineIndex.value = null
+      errorMessage.value = `Input error:\n${e.message}`
     }
     prettyJson.value = ''
 
@@ -462,13 +624,16 @@ function updateOutputContent(event) {
         applyHighlighting(inputContent.value, rawJson.value)
       }
     } catch (e) {
-      const match = e.message.match(/position\s(\d+)/i)
-      if (match) {
-        const pos = parseInt(match[1])
+      const pos = findErrorPosition(prettyJson.value, e)
+      if (pos !== null) {
         const lines = prettyJson.value.substring(0, pos).split('\n')
         outputErrorLineIndex.value = lines.length - 1
-        errorMessage.value = `Output error at line ${lines.length}:\n${lines.at(-1)}\n${' '.repeat(lines.at(-1).length)}←\n${e.message}`
-        // Don't auto-scroll to error - let user stay where they are editing
+        const errorLine = lines.at(-1) || ''
+        errorMessage.value = `Output error at line ${lines.length}:\n${errorLine}\n${' '.repeat(errorLine.length)}←\n${e.message}`
+      } else {
+        // Fallback: show error without line number
+        outputErrorLineIndex.value = null
+        errorMessage.value = `Output error:\n${e.message}`
       }
 
       // Restore scroll position even on error
