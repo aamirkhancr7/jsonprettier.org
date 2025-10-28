@@ -6,9 +6,26 @@
         <div class="panel-header">
           <h3>JSON Input</h3>
           <div class="actions">
+            <button @click="toggleInputFind" title="Find (Ctrl/Cmd+F)">🔍</button>
             <button @click="triggerFileUpload" title="Upload File">📁</button>
             <button @click="clearInput" title="Clear Input">🧹</button>
           </div>
+        </div>
+        <div v-if="showInputFind" class="find-box">
+          <input
+            ref="inputFindInput"
+            v-model="inputFindTerm"
+            @input="performInputSearch"
+            @keydown.enter="nextInputMatch"
+            @keydown.esc="showInputFind = false"
+            type="text"
+            placeholder="Find in input..."
+            class="find-input"
+          />
+          <span class="match-counter">{{ inputMatchInfo }}</span>
+          <button @click="prevInputMatch" :disabled="inputMatches.length === 0" title="Previous (Shift+Enter)">▲</button>
+          <button @click="nextInputMatch" :disabled="inputMatches.length === 0" title="Next (Enter)">▼</button>
+          <button @click="showInputFind = false" title="Close (Esc)">✕</button>
         </div>
         <input
           type="file"
@@ -48,10 +65,27 @@
         <div class="panel-header">
           <h3>Formatted Output</h3>
           <div class="actions">
+            <button @click="toggleOutputFind" title="Find (Ctrl/Cmd+F)" :disabled="!isInputValid || rawJson.trim() === ''">🔍</button>
             <button @click="copyJson" title="Copy" :disabled="!isInputValid || rawJson.trim() === ''">📋</button>
             <button @click="downloadJson" title="Download as .txt" :disabled="!isInputValid || rawJson.trim() === ''">💾</button>
             <button @click="toggleFullscreen" title="Fullscreen" :disabled="!isInputValid || rawJson.trim() === ''">🖥️</button>
           </div>
+        </div>
+        <div v-if="showOutputFind" class="find-box">
+          <input
+            ref="outputFindInput"
+            v-model="outputFindTerm"
+            @input="performOutputSearch"
+            @keydown.enter="nextOutputMatch"
+            @keydown.esc="showOutputFind = false"
+            type="text"
+            placeholder="Find in output..."
+            class="find-input"
+          />
+          <span class="match-counter">{{ outputMatchInfo }}</span>
+          <button @click="prevOutputMatch" :disabled="outputMatches.length === 0" title="Previous (Shift+Enter)">▲</button>
+          <button @click="nextOutputMatch" :disabled="outputMatches.length === 0" title="Next (Enter)">▼</button>
+          <button @click="showOutputFind = false" title="Close (Esc)">✕</button>
         </div>
         <div class="code-wrapper scroll-sync" ref="outputWrapper" @scroll="syncScroll">
           <div class="line-numbers" ref="outputLineNumbers">
@@ -100,9 +134,33 @@ const inputLineNumbers = ref(null)
 const outputLineNumbers = ref(null)
 const fileInput = ref(null)
 
+// Find functionality state
+const showInputFind = ref(false)
+const showOutputFind = ref(false)
+const inputFindTerm = ref('')
+const outputFindTerm = ref('')
+const inputFindInput = ref(null)
+const outputFindInput = ref(null)
+const inputMatches = ref([])
+const outputMatches = ref([])
+const inputCurrentMatchIndex = ref(0)
+const outputCurrentMatchIndex = ref(0)
+
 const inputLinesList = computed(() => rawJson.value.split('\n'))
 const outputLinesList = computed(() => prettyJson.value.split('\n'))
 const isInputValid = computed(() => errorMessage.value === '')
+
+const inputMatchInfo = computed(() => {
+  if (!inputFindTerm.value) return ''
+  if (inputMatches.value.length === 0) return 'No matches'
+  return `${inputCurrentMatchIndex.value + 1} of ${inputMatches.value.length}`
+})
+
+const outputMatchInfo = computed(() => {
+  if (!outputFindTerm.value) return ''
+  if (outputMatches.value.length === 0) return 'No matches'
+  return `${outputCurrentMatchIndex.value + 1} of ${outputMatches.value.length}`
+})
 
 // Clear input and output
 function clearInput() {
@@ -525,6 +583,13 @@ let highlightTimeout = null
 function onInputEdit(event) {
   const el = event.target
 
+  // Clear search highlights when editing starts
+  if (inputMatches.value.length > 0) {
+    inputMatches.value = []
+    inputCurrentMatchIndex.value = 0
+    inputFindTerm.value = ''
+  }
+
   // Save all positions immediately
   const savedCaret = saveCaretPosition(el)
   const savedWrapperScroll = inputWrapper.value?.scrollTop
@@ -564,6 +629,13 @@ let outputHighlightTimeout = null
 
 function updateOutputContent(event) {
   const el = event.target
+
+  // Clear search highlights when editing starts
+  if (outputMatches.value.length > 0) {
+    outputMatches.value = []
+    outputCurrentMatchIndex.value = 0
+    outputFindTerm.value = ''
+  }
 
   // Save all positions immediately
   const savedCaret = saveCaretPosition(el)
@@ -701,13 +773,256 @@ function focusFirstInputLineIfEmpty(event) {
 
 // Simple keyboard handlers (browser handles navigation naturally now)
 function handleInputKeydown(event) {
-  // Allow natural keyboard behavior
-  // Could add custom shortcuts here if needed
+  // Ctrl/Cmd+F to open find box
+  if ((event.ctrlKey || event.metaKey) && event.key === 'f') {
+    event.preventDefault()
+    toggleInputFind()
+  }
 }
 
 function handleOutputKeydown(event) {
-  // Allow natural keyboard behavior
-  // Could add custom shortcuts here if needed
+  // Ctrl/Cmd+F to open find box
+  if ((event.ctrlKey || event.metaKey) && event.key === 'f') {
+    event.preventDefault()
+    toggleOutputFind()
+  }
+}
+
+// --- Find functionality ---
+function toggleInputFind() {
+  showInputFind.value = !showInputFind.value
+  if (showInputFind.value) {
+    nextTick(() => {
+      inputFindInput.value?.focus()
+    })
+  } else {
+    // Clear highlighting when closing
+    inputMatches.value = []
+    inputFindTerm.value = ''
+    if (inputContent.value) {
+      applyHighlighting(inputContent.value, rawJson.value)
+    }
+  }
+}
+
+function toggleOutputFind() {
+  showOutputFind.value = !showOutputFind.value
+  if (showOutputFind.value) {
+    nextTick(() => {
+      outputFindInput.value?.focus()
+    })
+  } else {
+    // Clear highlighting when closing
+    outputMatches.value = []
+    outputFindTerm.value = ''
+    if (outputContent.value) {
+      applyHighlighting(outputContent.value, prettyJson.value)
+    }
+  }
+}
+
+function performInputSearch() {
+  if (!inputFindTerm.value) {
+    inputMatches.value = []
+    inputCurrentMatchIndex.value = 0
+    if (inputContent.value) {
+      applyHighlighting(inputContent.value, rawJson.value)
+    }
+    return
+  }
+
+  const text = rawJson.value
+  const searchTerm = inputFindTerm.value
+  const matches = []
+  let index = 0
+
+  // Find all matches (case-insensitive)
+  while (index < text.length) {
+    const foundIndex = text.toLowerCase().indexOf(searchTerm.toLowerCase(), index)
+    if (foundIndex === -1) break
+    matches.push({ start: foundIndex, end: foundIndex + searchTerm.length })
+    index = foundIndex + 1
+  }
+
+  inputMatches.value = matches
+  inputCurrentMatchIndex.value = matches.length > 0 ? 0 : 0
+  highlightInputMatches()
+}
+
+function performOutputSearch() {
+  if (!outputFindTerm.value) {
+    outputMatches.value = []
+    outputCurrentMatchIndex.value = 0
+    if (outputContent.value) {
+      applyHighlighting(outputContent.value, prettyJson.value)
+    }
+    return
+  }
+
+  const text = prettyJson.value
+  const searchTerm = outputFindTerm.value
+  const matches = []
+  let index = 0
+
+  // Find all matches (case-insensitive)
+  while (index < text.length) {
+    const foundIndex = text.toLowerCase().indexOf(searchTerm.toLowerCase(), index)
+    if (foundIndex === -1) break
+    matches.push({ start: foundIndex, end: foundIndex + searchTerm.length })
+    index = foundIndex + 1
+  }
+
+  outputMatches.value = matches
+  outputCurrentMatchIndex.value = matches.length > 0 ? 0 : 0
+  highlightOutputMatches()
+}
+
+function highlightInputMatches() {
+  if (!inputContent.value || inputMatches.value.length === 0) {
+    applyHighlighting(inputContent.value, rawJson.value)
+    return
+  }
+
+  const text = rawJson.value
+  let result = ''
+  let lastIndex = 0
+
+  // Sort matches by start position
+  const sortedMatches = [...inputMatches.value].sort((a, b) => a.start - b.start)
+
+  // Build the highlighted string with both syntax highlighting and search matches
+  sortedMatches.forEach((match, i) => {
+    const isCurrentMatch = i === inputCurrentMatchIndex.value
+    const className = isCurrentMatch ? 'find-highlight-current' : 'find-highlight'
+
+    // Add the part before the match with syntax highlighting
+    const beforeMatch = text.substring(lastIndex, match.start)
+    result += syntaxHighlight(beforeMatch)
+
+    // Add the matched text with both syntax highlighting and search highlight
+    const matchText = text.substring(match.start, match.end)
+    const highlightedMatchText = syntaxHighlight(matchText)
+    result += `<mark class="${className}">${highlightedMatchText}</mark>`
+
+    lastIndex = match.end
+  })
+
+  // Add remaining text after last match
+  result += syntaxHighlight(text.substring(lastIndex))
+
+  const scrollTop = inputContent.value.scrollTop
+  const scrollLeft = inputContent.value.scrollLeft
+  inputContent.value.innerHTML = result
+  inputContent.value.scrollTop = scrollTop
+  inputContent.value.scrollLeft = scrollLeft
+
+  // Scroll to current match
+  scrollToInputMatch()
+}
+
+function highlightOutputMatches() {
+  if (!outputContent.value || outputMatches.value.length === 0) {
+    applyHighlighting(outputContent.value, prettyJson.value)
+    return
+  }
+
+  const text = prettyJson.value
+  let result = ''
+  let lastIndex = 0
+
+  // Sort matches by start position
+  const sortedMatches = [...outputMatches.value].sort((a, b) => a.start - b.start)
+
+  // Build the highlighted string with both syntax highlighting and search matches
+  sortedMatches.forEach((match, i) => {
+    const isCurrentMatch = i === outputCurrentMatchIndex.value
+    const className = isCurrentMatch ? 'find-highlight-current' : 'find-highlight'
+
+    // Add the part before the match with syntax highlighting
+    const beforeMatch = text.substring(lastIndex, match.start)
+    result += syntaxHighlight(beforeMatch)
+
+    // Add the matched text with both syntax highlighting and search highlight
+    const matchText = text.substring(match.start, match.end)
+    const highlightedMatchText = syntaxHighlight(matchText)
+    result += `<mark class="${className}">${highlightedMatchText}</mark>`
+
+    lastIndex = match.end
+  })
+
+  // Add remaining text after last match
+  result += syntaxHighlight(text.substring(lastIndex))
+
+  const scrollTop = outputContent.value.scrollTop
+  const scrollLeft = outputContent.value.scrollLeft
+  outputContent.value.innerHTML = result
+  outputContent.value.scrollTop = scrollTop
+  outputContent.value.scrollLeft = scrollLeft
+
+  // Scroll to current match
+  scrollToOutputMatch()
+}
+
+function scrollToInputMatch() {
+  if (inputMatches.value.length === 0) return
+
+  const match = inputMatches.value[inputCurrentMatchIndex.value]
+  const text = rawJson.value.substring(0, match.start)
+  const lines = text.split('\n')
+  const lineNumber = lines.length - 1
+  const lineHeight = 24 // 1.5rem
+  const scrollPosition = Math.max(0, (lineNumber - 2) * lineHeight)
+
+  nextTick(() => {
+    if (inputWrapper.value) {
+      inputWrapper.value.scrollTop = scrollPosition
+    }
+  })
+}
+
+function scrollToOutputMatch() {
+  if (outputMatches.value.length === 0) return
+
+  const match = outputMatches.value[outputCurrentMatchIndex.value]
+  const text = prettyJson.value.substring(0, match.start)
+  const lines = text.split('\n')
+  const lineNumber = lines.length - 1
+  const lineHeight = 24 // 1.5rem
+  const scrollPosition = Math.max(0, (lineNumber - 2) * lineHeight)
+
+  nextTick(() => {
+    if (outputWrapper.value) {
+      outputWrapper.value.scrollTop = scrollPosition
+    }
+  })
+}
+
+function nextInputMatch() {
+  if (inputMatches.value.length === 0) return
+  inputCurrentMatchIndex.value = (inputCurrentMatchIndex.value + 1) % inputMatches.value.length
+  highlightInputMatches()
+}
+
+function prevInputMatch() {
+  if (inputMatches.value.length === 0) return
+  inputCurrentMatchIndex.value = inputCurrentMatchIndex.value === 0
+    ? inputMatches.value.length - 1
+    : inputCurrentMatchIndex.value - 1
+  highlightInputMatches()
+}
+
+function nextOutputMatch() {
+  if (outputMatches.value.length === 0) return
+  outputCurrentMatchIndex.value = (outputCurrentMatchIndex.value + 1) % outputMatches.value.length
+  highlightOutputMatches()
+}
+
+function prevOutputMatch() {
+  if (outputMatches.value.length === 0) return
+  outputCurrentMatchIndex.value = outputCurrentMatchIndex.value === 0
+    ? outputMatches.value.length - 1
+    : outputCurrentMatchIndex.value - 1
+  highlightOutputMatches()
 }
 
 onMounted(() => {
@@ -751,6 +1066,9 @@ onMounted(() => {
   display: flex;
   gap: 1rem;
   height: 100%;
+  background: #fff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  border-radius: 12px;
 }
 
 .panel {
@@ -901,5 +1219,72 @@ onMounted(() => {
 .output-panel.disabled {
   pointer-events: none;
   opacity: 0.4;
+}
+
+/* Find box styles */
+.find-box {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: #f9fafb;
+  border-bottom: 1px solid #ddd;
+}
+
+.find-input {
+  flex: 1;
+  padding: 0.375rem 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  font-family: 'Courier New', Courier, monospace;
+  outline: none;
+}
+
+.find-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.match-counter {
+  font-size: 0.75rem;
+  color: #6b7280;
+  min-width: 60px;
+  text-align: center;
+}
+
+.find-box button {
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  border: 1px solid #d1d5db;
+  background: white;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  transition: background-color 0.2s;
+}
+
+.find-box button:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.find-box button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Find highlighting styles */
+.json-editor-content :deep(mark.find-highlight) {
+  background-color: #fef08a;
+  color: inherit;
+  padding: 0;
+  border-radius: 2px;
+}
+
+.json-editor-content :deep(mark.find-highlight-current) {
+  background-color: #fbbf24;
+  color: inherit;
+  padding: 0;
+  border-radius: 2px;
+  font-weight: 600;
 }
 </style>
